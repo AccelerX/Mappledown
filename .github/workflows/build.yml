@@ -36,15 +36,13 @@ jobs:
 
   build:
     name: Build Mappledown.ipa
-    runs-on: macos-14
+    runs-on: macos-15
     needs: preview-test
     steps:
       - uses: actions/checkout@v4
 
-      - name: Pick Xcode
-        run: |
-          sudo xcode-select -s /Applications/Xcode_15.4.app
-          xcodebuild -version
+      - name: Show Xcode version
+        run: xcodebuild -version
 
       - name: Install XcodeGen and ldid
         run: brew install xcodegen ldid
