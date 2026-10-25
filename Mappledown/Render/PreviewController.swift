@@ -11,6 +11,17 @@ final class PreviewController: NSObject, ObservableObject, WKNavigationDelegate 
     /// When true the page uses print colors and layout (for PDF export).
     var printMode = false
     var headingPageBreak = false
+    var tableOfContents = false
+
+    /// Folder of the open .md file, used to show pictures stored next to it.
+    var baseFolder: URL? {
+        get { assets.baseFolder }
+        set { assets.baseFolder = newValue }
+    }
+
+    /// Called when the person scrolls the preview, with the source line now at the top.
+    var onUserScroll: ((Double) -> Void)?
+    private let assets: AssetSchemeHandler
 
     private var config: RenderConfig?
     private var loadedTags: String?
@@ -20,12 +31,15 @@ final class PreviewController: NSObject, ObservableObject, WKNavigationDelegate 
     private var readyWaiters: [CheckedContinuation<Void, Never>] = []
 
     override init() {
+        let handler = AssetSchemeHandler()
+        assets = handler
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = WKUserContentController()
+        configuration.setURLSchemeHandler(handler, forURLScheme: AssetSchemeHandler.scheme)
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
         let proxy = MessageProxy(owner: self)
-        for name in ["ready", "rendered", "log"] {
+        for name in ["ready", "rendered", "scrolled", "log"] {
             configuration.userContentController.add(proxy, name: name)
         }
         webView.isOpaque = false
@@ -75,12 +89,19 @@ final class PreviewController: NSObject, ObservableObject, WKNavigationDelegate 
             arguments: ["t": text], in: nil, contentWorld: .page)
     }
 
-    func setPrintMode(_ on: Bool, headingBreak: Bool) {
+    func setPrintMode(_ on: Bool, headingBreak: Bool, toc: Bool = false) {
         printMode = on
         headingPageBreak = headingBreak
+        tableOfContents = toc
         guard isReady else { return }
-        webView.callAsyncJavaScript("Mappledown.setPrintMode(on, h1)", arguments: ["on": on, "h1": headingBreak],
+        webView.callAsyncJavaScript("Mappledown.setPrintMode(on, h1, toc)", arguments: ["on": on, "h1": headingBreak, "toc": toc],
                                     in: nil, in: .page, completionHandler: nil)
+    }
+
+    /// Scrolls the preview so a source line is at the top (doesn't report back).
+    func scrollToLine(_ line: Double) {
+        guard isReady else { return }
+        webView.callAsyncJavaScript("Mappledown.scrollToLine(l)", arguments: ["l": line], in: nil, in: .page, completionHandler: nil)
     }
 
     /// The rendered body and MathJax's CSS, for HTML export.
@@ -132,11 +153,14 @@ final class PreviewController: NSObject, ObservableObject, WKNavigationDelegate 
         switch name {
         case "ready":
             isReady = true
-            if printMode { setPrintMode(true, headingBreak: headingPageBreak) }
+            if printMode { setPrintMode(true, headingBreak: headingPageBreak, toc: tableOfContents) }
             let waiters = readyWaiters
             readyWaiters = []
             waiters.forEach { $0.resume() }
             sendRender()
+        case "scrolled":
+            if let line = body as? Double { onUserScroll?(line) }
+            else if let line = body as? Int { onUserScroll?(Double(line)) }
         case "rendered":
             if let dict = body as? [String: Any], let errors = dict["errors"] as? Int {
                 mathErrors = errors

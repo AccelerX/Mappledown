@@ -101,6 +101,7 @@ struct EditorSettings: View {
                 .pickerStyle(.segmented)
             }
             Section("Typing") {
+                Toggle("Line numbers", isOn: $s.lineNumbers)
                 Toggle("Highlight Markdown and math", isOn: $s.highlightSyntax)
                 Toggle("Auto-close brackets and $", isOn: $s.autoPair)
                 VStack(alignment: .leading, spacing: 2) {
@@ -143,7 +144,7 @@ struct PreviewSettings: View {
             } header: {
                 Text("Appearance")
             } footer: {
-                Text("Match iPad follows Dark Mode in Control Center. Exported PDFs always use light colors.")
+                Text("Applies to the whole app: library, editor and preview. Match iPad follows Dark Mode in Control Center. Exported PDFs always use light colors.")
             }
             Section("Body font") {
                 Picker("Body font", selection: $s.bodyFont) {
@@ -154,6 +155,7 @@ struct PreviewSettings: View {
             Section("Reading") {
                 SizeStepper(title: "Text size", value: $s.previewFontSize, range: 12...28)
                 Toggle("Update while typing", isOn: $s.liveUpdate)
+                Toggle("Scroll editor and preview together", isOn: $s.syncScroll)
                 Toggle("Highlight code blocks", isOn: $s.highlightCode)
             }
         }
@@ -233,6 +235,7 @@ struct ExportSettings: View {
             Section("Options") {
                 Toggle("Page numbers in PDF", isOn: $s.pageNumbers)
                 Toggle("Start each # heading on a new page", isOn: $s.headingPageBreak)
+                Toggle("Table of contents from headings", isOn: $s.tableOfContents)
                 Toggle("Use file name as document title", isOn: $s.fileNameAsTitle)
                 Toggle("HTML follows the reader's Dark Mode", isOn: $s.htmlFollowsDarkMode)
             }

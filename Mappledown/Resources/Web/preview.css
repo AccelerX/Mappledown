@@ -70,4 +70,16 @@ mjx-container { outline: none; }
 :root.print pre, :root.print table, :root.print .math.display, :root.print img { break-inside: avoid; }
 :root.print pre { white-space: pre-wrap; }
 :root.print h1, :root.print h2, :root.print h3 { break-after: avoid; }
-:root.print.h1-break h1:not(:first-child) { break-before: page; }
+:root.print.h1-break h1 ~ h1 { break-before: page; }
+
+.img-missing { display: inline-block; font-size: 0.85em; color: var(--text2); border: 1px dashed var(--sep); border-radius: 8px; padding: 6px 10px; }
+
+/* Table of contents, added only in PDF export */
+.toc { margin: 0 0 2em; padding-bottom: 1em; border-bottom: 1px solid var(--sep); }
+.toc-title { font-size: 1.4em; font-weight: 700; margin-bottom: 0.6em; }
+.toc-item { margin: 0.2em 0; }
+.toc-h1 { font-weight: 600; }
+.toc-h2 { padding-left: 1.2em; }
+.toc-h3 { padding-left: 2.4em; font-size: 0.95em; color: var(--text2); }
+:root.print .toc { break-after: page; border-bottom: 0; }
+:root.print.h1-break .toc + h1 { break-before: auto; }

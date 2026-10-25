@@ -13,6 +13,7 @@ struct ExportSheet: View {
     @State private var margins: Margins = .normal
     @State private var pageNumbers = true
     @State private var headingBreak = false
+    @State private var toc = false
     @State private var fileNameAsTitle = true
     @State private var followDark = true
     @State private var loaded = false
@@ -76,14 +77,17 @@ struct ExportSheet: View {
             margins = settings.margins
             pageNumbers = settings.pageNumbers
             headingBreak = settings.headingPageBreak
+            toc = settings.tableOfContents
             fileNameAsTitle = settings.fileNameAsTitle
             followDark = settings.htmlFollowsDarkMode
             preview.printMode = true
             preview.headingPageBreak = headingBreak
+            preview.tableOfContents = toc && format == .pdf
+            preview.baseFolder = document.url.deletingLastPathComponent()
         }
-        .onChange(of: headingBreak) { on in
-            preview.setPrintMode(true, headingBreak: on)
-        }
+        .onChange(of: headingBreak) { _ in updatePrintMode() }
+        .onChange(of: toc) { _ in updatePrintMode() }
+        .onChange(of: format) { _ in updatePrintMode() }
         .alert("Export failed", isPresented: Binding(get: { errorText != nil }, set: { if !$0 { errorText = nil } })) {
             Button("OK", role: .cancel) { errorText = nil }
         } message: {
@@ -160,6 +164,7 @@ struct ExportSheet: View {
                 Section {
                     Toggle("Page numbers", isOn: $pageNumbers)
                     Toggle("Start each # heading on a new page", isOn: $headingBreak)
+                    Toggle("Table of contents from headings", isOn: $toc)
                     Toggle("Use file name as document title", isOn: $fileNameAsTitle)
                 }
             } else {
@@ -178,16 +183,20 @@ struct ExportSheet: View {
         }
     }
 
+    private func updatePrintMode() {
+        preview.setPrintMode(true, headingBreak: headingBreak, toc: toc && format == .pdf)
+    }
+
     // MARK: Share
 
     private func share() async {
         working = true
         defer { working = false }
         await preview.renderAndWait(text: document.text, config: config)
-        preview.setPrintMode(true, headingBreak: headingBreak)
+        updatePrintMode()
         try? await Task.sleep(nanoseconds: 150_000_000)
         let options = ExportOptions(format: format, paper: paper, margins: margins, pageNumbers: pageNumbers,
-                                    headingPageBreak: headingBreak, title: title, fileName: fileName,
+                                    headingPageBreak: headingBreak, tableOfContents: toc && format == .pdf, title: title, fileName: fileName,
                                     htmlFollowsDarkMode: followDark)
         do {
             let url = try await Exporter.export(from: preview, options: options)

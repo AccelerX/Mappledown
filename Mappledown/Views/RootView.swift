@@ -1,7 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-enum ImportTarget {
+enum ImportTarget: Equatable {
     case file, folder
 }
 
@@ -12,34 +12,25 @@ struct RootView: View {
     @State private var selection: SidebarItem? = .recents
     @State private var showSettings = false
     @State private var importTarget: ImportTarget?
+    /// Remembered separately: the picker clears `importTarget` before its result arrives.
+    @State private var pickingFolder = false
     @State private var columns: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columns) {
-            SidebarView(selection: $selection, showSettings: $showSettings, importTarget: $importTarget)
-                .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 340)
-        } detail: {
-            detail
-        }
-        .navigationSplitViewStyle(.balanced)
-        .fileImporter(isPresented: importBinding,
-                      allowedContentTypes: importTarget == .folder ? [.folder] : [.markdownText, .plainText, .text],
-                      allowsMultipleSelection: false) { result in
-            let target = importTarget
-            importTarget = nil
-            guard case .success(let urls) = result, let url = urls.first else { return }
-            if target == .folder {
-                library.addFolder(url)
-                if let folder = library.folders.last { selection = .folder(folder.id) }
+        // The open document replaces the library instead of being presented over it.
+        // Presenting it as a cover failed when it was opened from a folder list or
+        // right after the Files picker closed.
+        ZStack {
+            if let doc = library.current {
+                DocumentView(document: doc, initialMode: library.currentMode)
+                    .id(doc.id)
+                    .transition(.opacity)
             } else {
-                library.open(url, defaultMode: settings.defaultMode)
+                library_
+                    .transition(.opacity)
             }
         }
-        .fullScreenCover(item: $library.current) { doc in
-            DocumentView(document: doc, initialMode: library.currentMode)
-                .environmentObject(library)
-                .environmentObject(settings)
-        }
+        .animation(.easeInOut(duration: 0.2), value: library.current?.id)
         .fullScreenCover(isPresented: $showSettings) {
             SettingsView()
                 .environmentObject(settings)
@@ -48,6 +39,32 @@ struct RootView: View {
             Button("OK", role: .cancel) { library.alert = nil }
         } message: {
             Text(library.alert ?? "")
+        }
+        .onChange(of: importTarget) { target in
+            if let target { pickingFolder = (target == .folder) }
+        }
+    }
+
+    private var library_: some View {
+        NavigationSplitView(columnVisibility: $columns) {
+            SidebarView(selection: $selection, showSettings: $showSettings, importTarget: $importTarget)
+                .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 340)
+        } detail: {
+            detail
+        }
+        .navigationSplitViewStyle(.balanced)
+        .fileImporter(isPresented: importBinding,
+                      allowedContentTypes: (importTarget ?? (pickingFolder ? .folder : .file)) == .folder ? [.folder] : [.markdownText, .plainText, .text],
+                      allowsMultipleSelection: false) { result in
+            let folder = pickingFolder
+            importTarget = nil
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            if folder {
+                library.addFolder(url)
+                if let folder = library.folders.last { selection = .folder(folder.id) }
+            } else {
+                library.open(url, defaultMode: settings.defaultMode)
+            }
         }
     }
 

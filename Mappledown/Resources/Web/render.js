@@ -215,8 +215,9 @@
     };
     md.renderer.rules.math_block = function (tokens, idx) {
       var t = tokens[idx];
-      if (t.meta.env) return '<div class="math display">' + escapeHtml(t.content) + '</div>\n';
-      return '<div class="math display">\\[' + escapeHtml(t.content) + '\\]</div>\n';
+      var line = t.map ? ' data-line="' + (t.map[0] + 1) + '"' : '';
+      if (t.meta.env) return '<div class="math display"' + line + '>' + escapeHtml(t.content) + '</div>\n';
+      return '<div class="math display"' + line + '>\\[' + escapeHtml(t.content) + '\\]</div>\n';
     };
   }
 
@@ -238,6 +239,57 @@
   });
   md.use(mathPlugin);
   if (window.markdownitFootnote) md.use(window.markdownitFootnote);
+
+  // Tag block elements with their source line, for scrolling the editor and preview together.
+  md.core.ruler.push('source_lines', function (state) {
+    state.tokens.forEach(function (t) {
+      if (t.map && t.nesting !== -1 && t.type !== 'math_block' && t.type !== 'inline') {
+        t.attrSet('data-line', String(t.map[0] + 1));
+      }
+    });
+  });
+  var defaultFence = md.renderer.rules.fence;
+  md.renderer.rules.fence = function (tokens, idx, options, env, slf) {
+    var html = defaultFence(tokens, idx, options, env, slf);
+    var t = tokens[idx];
+    if (t.map && html.indexOf('<pre data-line') !== 0) {
+      html = html.replace(/^<pre/, '<pre data-line="' + (t.map[0] + 1) + '"');
+    }
+    return html;
+  };
+
+  // Pictures stored next to the .md file are served by the app through mdasset:// URLs.
+  function isRelativeSrc(src) {
+    return src && !/^[a-z][a-z0-9+.-]*:/i.test(src) && src.indexOf('//') !== 0 && src.charAt(0) !== '#';
+  }
+  function assetURL(src) {
+    if (src.charAt(0) === '/') return 'mdasset://abs/?p=' + encodeURIComponent(decodeURI(src));
+    return 'mdasset://doc/?p=' + encodeURIComponent(decodeURI(src));
+  }
+  var defaultImage = md.renderer.rules.image;
+  md.renderer.rules.image = function (tokens, idx, options, env, slf) {
+    var t = tokens[idx];
+    var src = t.attrGet('src');
+    if (isRelativeSrc(src)) t.attrSet('src', assetURL(src));
+    return defaultImage(tokens, idx, options, env, slf);
+  };
+
+  function fixImages(el) {
+    el.querySelectorAll('img').forEach(function (img) {
+      var src = img.getAttribute('src');
+      if (isRelativeSrc(src)) img.setAttribute('src', assetURL(src));
+      if ((img.getAttribute('src') || '').indexOf('mdasset:') === 0) {
+        img.addEventListener('error', function () {
+          var name = decodeURIComponent((img.getAttribute('src').split('p=')[1] || ''));
+          var note = document.createElement('span');
+          note.className = 'img-missing';
+          note.textContent = 'Picture not available: ' + name +
+            '. If it is in the same folder, add that folder with Add Folder… so Mappledown can read it.';
+          img.replaceWith(note);
+        }, { once: true });
+      }
+    });
+  }
 
   // ---------- Page setup ----------
   function applyLook(c) {
@@ -275,8 +327,10 @@
     await MathJax.startup.promise;
     MathJax.typesetClear([el]);
     el.innerHTML = macrosHtml() + md.render(text || '');
+    fixImages(el);
     MathJax.texReset();
     await MathJax.typesetPromise([el]);
+    applyToc();
     renderCount++;
     post('rendered', { count: renderCount, errors: el.querySelectorAll('[data-mml-node="merror"]').length });
   }
@@ -300,6 +354,81 @@
     return chain;
   }
 
+  // ---------- Table of contents (PDF export) ----------
+  var printOpts = { on: false, h1Break: false, toc: false };
+
+  function applyToc() {
+    var el = document.getElementById('content');
+    var old = document.getElementById('toc');
+    if (old) old.remove();
+    if (!printOpts.on || !printOpts.toc) return;
+    var heads = el.querySelectorAll('h1, h2, h3');
+    if (!heads.length) return;
+    var nav = document.createElement('nav');
+    nav.id = 'toc';
+    nav.className = 'toc';
+    var title = document.createElement('div');
+    title.className = 'toc-title';
+    title.textContent = 'Contents';
+    nav.appendChild(title);
+    heads.forEach(function (h) {
+      var item = document.createElement('div');
+      item.className = 'toc-item toc-' + h.tagName.toLowerCase();
+      // Keep rendered math in headings: copy the heading's content, not just its text.
+      item.innerHTML = h.innerHTML;
+      nav.appendChild(item);
+    });
+    el.insertBefore(nav, el.firstChild);
+  }
+
+  // ---------- Scrolling together with the editor ----------
+  var ignoreScrollUntil = 0, scrollQueued = false;
+
+  function anchors() {
+    var list = [];
+    var last = -1;
+    document.querySelectorAll('#content [data-line]').forEach(function (e) {
+      var line = +e.getAttribute('data-line');
+      var top = e.getBoundingClientRect().top + window.scrollY;
+      if (line > last) { list.push({ line: line, top: top }); last = line; }
+    });
+    return list;
+  }
+
+  function scrollToLine(line) {
+    var a = anchors();
+    if (!a.length) return;
+    var i = 0;
+    while (i + 1 < a.length && a[i + 1].line <= line) i++;
+    var cur = a[i], next = a[i + 1];
+    var y = cur.top;
+    if (line < cur.line) y = cur.top * (line - 1) / Math.max(1, cur.line - 1);
+    else if (next) y = cur.top + (line - cur.line) / (next.line - cur.line) * (next.top - cur.top);
+    ignoreScrollUntil = Date.now() + 250;
+    window.scrollTo(0, Math.max(0, y - 12));
+  }
+
+  function lineAtTop() {
+    var a = anchors();
+    if (!a.length) return 1;
+    var y = window.scrollY + 12;
+    var i = 0;
+    while (i + 1 < a.length && a[i + 1].top <= y) i++;
+    var cur = a[i], next = a[i + 1];
+    if (y < cur.top) return 1 + (cur.line - 1) * y / Math.max(1, cur.top);
+    if (!next) return cur.line;
+    return cur.line + (y - cur.top) / Math.max(1, next.top - cur.top) * (next.line - cur.line);
+  }
+
+  window.addEventListener('scroll', function () {
+    if (Date.now() < ignoreScrollUntil || scrollQueued) return;
+    scrollQueued = true;
+    requestAnimationFrame(function () {
+      scrollQueued = false;
+      if (Date.now() >= ignoreScrollUntil) post('scrolled', lineAtTop());
+    });
+  }, { passive: true });
+
   window.Mappledown = {
     render: function (text) { return schedule(text); },
     setLook: function (c) { cfg = Object.assign(cfg, c || {}); applyLook(cfg); },
@@ -309,7 +438,10 @@
       var mj = document.getElementById('MJX-SVG-styles');
       return { body: el.innerHTML, mathCSS: mj ? mj.textContent : '' };
     },
-    setPrintMode: function (on, h1Break) {
+    scrollToLine: scrollToLine,
+    setPrintMode: function (on, h1Break, toc) {
+      printOpts = { on: !!on, h1Break: !!h1Break, toc: !!toc };
+      applyToc();
       var root = document.documentElement;
       root.classList.toggle('print', !!on);
       root.classList.toggle('h1-break', !!on && !!h1Break);

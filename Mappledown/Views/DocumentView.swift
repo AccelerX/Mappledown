@@ -50,63 +50,104 @@ struct DocumentView: View {
             justSaved = false
             scheduleAutosave()
         }
+        .onAppear {
+            preview.baseFolder = document.url.deletingLastPathComponent()
+            connectScrolling()
+        }
+        .onChange(of: mode) { _ in connectScrolling() }
+        .onChange(of: settings.syncScroll) { _ in connectScrolling() }
+    }
+
+    /// In Split view, scrolling one side scrolls the other to the same source line.
+    private func connectScrolling() {
+        guard settings.syncScroll && mode == .split else {
+            editor.onUserScroll = nil
+            preview.onUserScroll = nil
+            return
+        }
+        let preview = self.preview
+        let editor = self.editor
+        editor.onUserScroll = { [weak preview] line in preview?.scrollToLine(line) }
+        preview.onUserScroll = { [weak editor] line in editor?.scroll(toLine: line) }
     }
 
     // MARK: Header
 
     private var header: some View {
-        HStack(spacing: 12) {
-            Button {
-                close()
-            } label: {
-                HStack(spacing: 2) {
-                    Image(systemName: "chevron.left").font(.system(size: 20, weight: .semibold))
-                    Text("Library").font(.system(size: 17, weight: .medium))
+        GeometryReader { geo in
+            // Narrow windows (portrait, Split View) get icon-only buttons so nothing wraps.
+            let compact = geo.size.width < 1000
+            HStack(spacing: compact ? 8 : 12) {
+                Button {
+                    close()
+                } label: {
+                    HStack(spacing: 2) {
+                        Image(systemName: "chevron.left").font(.system(size: 20, weight: .semibold))
+                        Text("Library").font(.system(size: 17, weight: .medium))
+                    }
+                    .frame(height: 44)
                 }
-                .frame(height: 44)
-            }
+                .fixedSize()
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(document.name).font(.headline).lineLimit(1)
-                Text(document.location).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
-            }
-            .layoutPriority(1)
-
-            Spacer(minLength: 12)
-
-            Picker("View mode", selection: $mode) {
-                ForEach(ViewMode.allCases) { Text($0.label).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 270)
-
-            Spacer(minLength: 12)
-
-            if mode != .preview {
-                Button { editor.undo() } label: {
-                    Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(document.name).font(.headline).lineLimit(1).truncationMode(.middle)
+                    Text(document.location).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
                 }
-                .accessibilityLabel("Undo")
-                Button { editor.redo() } label: {
-                    Image(systemName: "arrow.uturn.forward").frame(width: 44, height: 44)
-                }
-                .accessibilityLabel("Redo")
-            }
 
-            Button("Save") { save() }
+                Spacer(minLength: 8)
+
+                Picker("View mode", selection: $mode) {
+                    ForEach(ViewMode.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: compact ? 210 : 270)
+                .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 8)
+
+                if mode != .preview {
+                    Button { editor.undo() } label: {
+                        Image(systemName: "arrow.uturn.backward").frame(width: 40, height: 44)
+                    }
+                    .accessibilityLabel("Undo")
+                    Button { editor.redo() } label: {
+                        Image(systemName: "arrow.uturn.forward").frame(width: 40, height: 44)
+                    }
+                    .accessibilityLabel("Redo")
+                }
+
+                Button {
+                    save()
+                } label: {
+                    if compact {
+                        Image(systemName: "square.and.arrow.down")
+                    } else {
+                        Text("Save")
+                    }
+                }
+                .accessibilityLabel("Save")
                 .buttonStyle(.bordered)
                 .keyboardShortcut("s", modifiers: .command)
+                .fixedSize()
 
-            Button {
-                if document.isDirty && settings.autosave { document.save() }
-                showExport = true
-            } label: {
-                Label("Export", systemImage: "square.and.arrow.up")
+                Button {
+                    if document.isDirty && settings.autosave { document.save() }
+                    showExport = true
+                } label: {
+                    if compact {
+                        Image(systemName: "square.and.arrow.up")
+                    } else {
+                        Label("Export", systemImage: "square.and.arrow.up")
+                    }
+                }
+                .accessibilityLabel("Export")
+                .buttonStyle(.borderedProminent)
+                .fixedSize()
             }
-            .buttonStyle(.borderedProminent)
+            .font(.body)
+            .padding(.horizontal, 16)
+            .frame(width: geo.size.width, height: 64)
         }
-        .font(.body)
-        .padding(.horizontal, 16)
         .frame(height: 64)
         .background(Color(uiColor: .secondarySystemBackground).opacity(0.6))
     }

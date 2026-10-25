@@ -7,6 +7,7 @@ struct ExportOptions {
     var margins: Margins
     var pageNumbers: Bool
     var headingPageBreak: Bool
+    var tableOfContents: Bool
     var title: String
     var fileName: String
     var htmlFollowsDarkMode: Bool
@@ -31,7 +32,8 @@ enum Exporter {
             try data.write(to: url)
         case .html:
             let parts = await preview.exportParts()
-            let html = makeHTML(body: parts.body, mathCSS: parts.mathCSS, options: options)
+            let body = AssetSchemeHandler.inlinePictures(in: parts.body, base: preview.baseFolder)
+            let html = makeHTML(body: body, mathCSS: parts.mathCSS, options: options)
             try Data(html.utf8).write(to: url)
         }
         return url

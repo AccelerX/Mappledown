@@ -4,9 +4,25 @@ import UIKit
 /// Lets the toolbar, math keys and status bar talk to the text view.
 @MainActor
 final class EditorController: ObservableObject {
-    weak var textView: UITextView?
+    weak var textView: LineNumberTextView?
     @Published var line = 1
     @Published var column = 1
+
+    /// Called when the person scrolls the editor, with the source line now at the top.
+    var onUserScroll: ((Double) -> Void)?
+    private var ignoreScrollUntil = Date.distantPast
+
+    /// Scrolls the editor to a source line without reporting it back (avoids a loop with the preview).
+    func scroll(toLine line: Double) {
+        guard let tv = textView, !tv.isTracking, !tv.isDecelerating else { return }
+        ignoreScrollUntil = Date().addingTimeInterval(0.25)
+        tv.scroll(toLine: line)
+    }
+
+    func didScroll() {
+        guard let tv = textView, Date() > ignoreScrollUntil, tv.isTracking || tv.isDecelerating || tv.isDragging else { return }
+        onUserScroll?(tv.topVisibleLine())
+    }
 
     /// Inserts `before` + selection + `after` and places the cursor `cursorBack` characters before the end.
     func insert(_ snippet: String, cursorBack: Int = 0) {
@@ -43,8 +59,8 @@ struct EditorView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
+    func makeUIView(context: Context) -> LineNumberTextView {
+        let tv = LineNumberTextView()
         tv.delegate = context.coordinator
         tv.autocorrectionType = .no
         tv.autocapitalizationType = .none
@@ -52,15 +68,15 @@ struct EditorView: UIViewRepresentable {
         tv.keyboardDismissMode = .interactive
         tv.alwaysBounceVertical = true
         tv.backgroundColor = .clear
-        tv.textContainerInset = UIEdgeInsets(top: 18, left: 16, bottom: 40, right: 16)
         tv.text = text
+        tv.textDidChangeForGutter()
         controller.textView = tv
         context.coordinator.apply(settings: settings, to: tv)
         context.coordinator.highlight(tv)
         return tv
     }
 
-    func updateUIView(_ tv: UITextView, context: Context) {
+    func updateUIView(_ tv: LineNumberTextView, context: Context) {
         context.coordinator.parent = self
         controller.textView = tv
         if context.coordinator.appliedSignature != context.coordinator.signature(settings) {
@@ -71,6 +87,7 @@ struct EditorView: UIViewRepresentable {
             let selected = tv.selectedRange
             tv.text = text
             tv.selectedRange = NSRange(location: min(selected.location, (text as NSString).length), length: 0)
+            tv.textDidChangeForGutter()
             context.coordinator.highlight(tv)
         }
     }
@@ -84,7 +101,7 @@ struct EditorView: UIViewRepresentable {
         init(_ parent: EditorView) { self.parent = parent }
 
         func signature(_ s: AppSettings) -> String {
-            "\(s.editorFontSize)-\(s.lineSpacing.rawValue)-\(s.highlightSyntax)-\(s.smartQuotes)"
+            "\(s.editorFontSize)-\(s.lineSpacing.rawValue)-\(s.highlightSyntax)-\(s.smartQuotes)-\(s.lineNumbers)"
         }
 
         func apply(settings s: AppSettings, to tv: UITextView) {
@@ -93,6 +110,10 @@ struct EditorView: UIViewRepresentable {
             tv.smartDashesType = s.smartQuotes ? .yes : .no
             tv.smartInsertDeleteType = .no
             tv.typingAttributes = baseAttributes(s)
+            if let lt = tv as? LineNumberTextView {
+                lt.numberFont = .monospacedDigitSystemFont(ofSize: max(10, s.editorFontSize * 0.78), weight: .regular)
+                lt.showsLineNumbers = s.lineNumbers
+            }
         }
 
         func baseAttributes(_ s: AppSettings) -> [NSAttributedString.Key: Any] {
@@ -180,12 +201,18 @@ struct EditorView: UIViewRepresentable {
 
         func textViewDidChange(_ tv: UITextView) {
             parent.text = tv.text
+            (tv as? LineNumberTextView)?.textDidChangeForGutter()
             parent.controller.updatePosition()
             scheduleHighlight(tv)
         }
 
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            parent.controller.didScroll()
+        }
+
         func textViewDidChangeSelection(_ tv: UITextView) {
             parent.controller.updatePosition()
+            tv.subviews.forEach { if $0 is LineNumberGutter { $0.setNeedsDisplay() } }
         }
 
         private static let pairs: [String: String] = ["(": ")", "[": "]", "{": "}", "$": "$"]

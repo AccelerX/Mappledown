@@ -22,6 +22,14 @@ enum Appearance: String, CaseIterable, Identifiable {
         case .dark: return "Dark"
         }
     }
+    /// nil means "follow the iPad".
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
 }
 
 enum BodyFont: String, CaseIterable, Identifiable {
@@ -108,6 +116,7 @@ final class AppSettings: ObservableObject {
     @Published var editorFontSize: Double { didSet { store.set(editorFontSize, forKey: "editorFontSize") } }
     @Published var lineSpacing: LineSpacing { didSet { store.set(lineSpacing.rawValue, forKey: "lineSpacing") } }
     @Published var highlightSyntax: Bool { didSet { store.set(highlightSyntax, forKey: "highlightSyntax") } }
+    @Published var lineNumbers: Bool { didSet { store.set(lineNumbers, forKey: "lineNumbers") } }
     @Published var autoPair: Bool { didSet { store.set(autoPair, forKey: "autoPair") } }
     @Published var smartQuotes: Bool { didSet { store.set(smartQuotes, forKey: "smartQuotes") } }
     @Published var mathKeys: Bool { didSet { store.set(mathKeys, forKey: "mathKeys") } }
@@ -115,10 +124,16 @@ final class AppSettings: ObservableObject {
     @Published var defaultMode: ViewMode { didSet { store.set(defaultMode.rawValue, forKey: "defaultMode") } }
 
     // Preview
-    @Published var appearance: Appearance { didSet { store.set(appearance.rawValue, forKey: "appearance") } }
+    @Published var appearance: Appearance {
+        didSet {
+            store.set(appearance.rawValue, forKey: "appearance")
+            applyAppearance()
+        }
+    }
     @Published var bodyFont: BodyFont { didSet { store.set(bodyFont.rawValue, forKey: "bodyFont") } }
     @Published var previewFontSize: Double { didSet { store.set(previewFontSize, forKey: "previewFontSize") } }
     @Published var liveUpdate: Bool { didSet { store.set(liveUpdate, forKey: "liveUpdate") } }
+    @Published var syncScroll: Bool { didSet { store.set(syncScroll, forKey: "syncScroll") } }
     @Published var highlightCode: Bool { didSet { store.set(highlightCode, forKey: "highlightCode") } }
 
     // Math
@@ -136,6 +151,7 @@ final class AppSettings: ObservableObject {
     @Published var margins: Margins { didSet { store.set(margins.rawValue, forKey: "margins") } }
     @Published var pageNumbers: Bool { didSet { store.set(pageNumbers, forKey: "pageNumbers") } }
     @Published var headingPageBreak: Bool { didSet { store.set(headingPageBreak, forKey: "headingPageBreak") } }
+    @Published var tableOfContents: Bool { didSet { store.set(tableOfContents, forKey: "tableOfContents") } }
     @Published var fileNameAsTitle: Bool { didSet { store.set(fileNameAsTitle, forKey: "fileNameAsTitle") } }
     @Published var htmlFollowsDarkMode: Bool { didSet { store.set(htmlFollowsDarkMode, forKey: "htmlFollowsDarkMode") } }
     @Published var dateInFileName: Bool { didSet { store.set(dateInFileName, forKey: "dateInFileName") } }
@@ -154,6 +170,7 @@ final class AppSettings: ObservableObject {
         editorFontSize = double("editorFontSize", 15)
         lineSpacing = pick("lineSpacing", LineSpacing.normal)
         highlightSyntax = bool("highlightSyntax", true)
+        lineNumbers = bool("lineNumbers", true)
         autoPair = bool("autoPair", true)
         smartQuotes = bool("smartQuotes", false)
         mathKeys = bool("mathKeys", true)
@@ -164,6 +181,7 @@ final class AppSettings: ObservableObject {
         bodyFont = pick("bodyFont", BodyFont.sans)
         previewFontSize = double("previewFontSize", 17)
         liveUpdate = bool("liveUpdate", true)
+        syncScroll = bool("syncScroll", true)
         highlightCode = bool("highlightCode", true)
 
         macros = d.string(forKey: "macros") ?? AppSettings.defaultMacros
@@ -179,11 +197,27 @@ final class AppSettings: ObservableObject {
         margins = pick("margins", Margins.normal)
         pageNumbers = bool("pageNumbers", true)
         headingPageBreak = bool("headingPageBreak", false)
+        tableOfContents = bool("tableOfContents", false)
         fileNameAsTitle = bool("fileNameAsTitle", true)
         htmlFollowsDarkMode = bool("htmlFollowsDarkMode", true)
         dateInFileName = bool("dateInFileName", false)
 
         showFilesTip = bool("showFilesTip", true)
+    }
+
+    /// Sets Light/Dark on every window, so sheets and full-screen screens follow too.
+    /// (SwiftUI's preferredColorScheme can't switch back to "Match iPad" without a relaunch.)
+    func applyAppearance() {
+        let style: UIUserInterfaceStyle
+        switch appearance {
+        case .system: style = .unspecified
+        case .light: style = .light
+        case .dark: style = .dark
+        }
+        for scene in UIApplication.shared.connectedScenes {
+            guard let windowScene = scene as? UIWindowScene else { continue }
+            for window in windowScene.windows { window.overrideUserInterfaceStyle = style }
+        }
     }
 
     /// What the preview page needs to know, sent to the web view as JSON.
