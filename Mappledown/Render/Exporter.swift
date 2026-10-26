@@ -33,7 +33,7 @@ enum Exporter {
         case .html:
             let parts = await preview.exportParts()
             let body = AssetSchemeHandler.inlinePictures(in: parts.body, base: preview.baseFolder)
-            let html = makeHTML(body: body, mathCSS: parts.mathCSS, options: options)
+            let html = makeHTML(body: body, mathCSS: inlineMathFonts(in: parts.mathCSS), options: options)
             try Data(html.utf8).write(to: url)
         }
         return url
@@ -70,6 +70,27 @@ enum Exporter {
     }
 
     // MARK: HTML
+
+    /// Swaps the math font links for the fonts themselves, so the HTML file works on its own.
+    static func inlineMathFonts(in css: String) -> String {
+        guard let folder = Bundle.main.resourceURL?.appendingPathComponent("Web/vendor/mathjax-fonts"),
+              let regex = try? NSRegularExpression(pattern: #"url\(\s*["']?[^"')]*?([A-Za-z0-9_-]+\.woff)["']?\s*\)"#) else { return css }
+        let ns = css as NSString
+        var result = ""
+        var last = 0
+        for match in regex.matches(in: css, range: NSRange(location: 0, length: ns.length)) {
+            result += ns.substring(with: NSRange(location: last, length: match.range.location - last))
+            let name = ns.substring(with: match.range(at: 1))
+            if let data = try? Data(contentsOf: folder.appendingPathComponent(name)) {
+                result += "url(data:font/woff;base64,\(data.base64EncodedString()))"
+            } else {
+                result += ns.substring(with: match.range)
+            }
+            last = match.range.location + match.range.length
+        }
+        result += ns.substring(from: last)
+        return result
+    }
 
     static func makeHTML(body: String, mathCSS: String, options: ExportOptions) -> String {
         func resource(_ name: String, _ ext: String, _ dir: String = "Web") -> String {

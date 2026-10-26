@@ -75,6 +75,8 @@ struct RootView: View {
             NavigationStack { RecentsView(pinnedOnly: false, importTarget: $importTarget) }
         case .pinned:
             NavigationStack { RecentsView(pinnedOnly: true, importTarget: $importTarget) }
+        case .trash:
+            NavigationStack { TrashView() }
         case .onMyIPad:
             FolderBrowser(root: library.documentsURL, title: "On My iPad", isICloud: false)
                 .id("on-my-ipad")

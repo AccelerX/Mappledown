@@ -1,5 +1,5 @@
 /*
- * Mappledown renderer: Markdown (markdown-it) + LaTeX math (MathJax 3, SVG output).
+ * Mappledown renderer: Markdown (markdown-it) + LaTeX math (MathJax 3, CHTML output with the bundled TeX fonts).
  *
  * The app sets window.MAPPLEDOWN_CONFIG before this file loads, then calls
  * Mappledown.render(markdownText). Changing a math setting reloads the page,
@@ -23,7 +23,7 @@
   };
   var cfg = Object.assign({}, defaults, window.MAPPLEDOWN_CONFIG || {});
 
-  // ---------- MathJax configuration (read once when tex-svg-full.js loads) ----------
+  // ---------- MathJax configuration (read once when tex-chtml-full.js loads) ----------
   window.MathJax = {
     tex: {
       // Only text inside our own .math elements is ever typeset, so these
@@ -35,7 +35,9 @@
       processRefs: true,
       tags: cfg.tags,
     },
-    svg: { fontCache: 'local', displayAlign: 'center' },
+    // CHTML draws math with real fonts, so iPadOS smooths it like ordinary text.
+    // (SVG paths looked rough on iPad, with dark fringes around glyphs.)
+    chtml: { fontURL: 'vendor/mathjax-fonts', displayAlign: 'center' },
     options: {
       ignoreHtmlClass: 'tex2jax_ignore',
       processHtmlClass: 'math',
@@ -332,7 +334,7 @@
     await MathJax.typesetPromise([el]);
     applyToc();
     renderCount++;
-    post('rendered', { count: renderCount, errors: el.querySelectorAll('[data-mml-node="merror"]').length });
+    post('rendered', { count: renderCount, errors: el.querySelectorAll('mjx-merror, [data-mml-node="merror"]').length });
   }
 
   // Returns a promise that settles once the newest text has been rendered.
@@ -429,14 +431,37 @@
     });
   }, { passive: true });
 
+  // MathJax's CHTML stylesheet, keeping only the @font-face rules for fonts this document uses.
+  // MathJax adds rules with insertRule, so read cssRules rather than the <style> text.
+  function mathCSS(el) {
+    var style = document.getElementById('MJX-CHTML-styles');
+    if (!style || !style.sheet) return '';
+    var rules = Array.prototype.slice.call(style.sheet.cssRules);
+    var used = { MJXZERO: true, MJXTEX: true };
+    var html = el.innerHTML;
+    rules.forEach(function (r) {
+      if (r.type !== 1 || !/\.TEX-/.test(r.selectorText)) return;
+      var names = r.selectorText.match(/\.TEX-[A-Za-z0-9-]+/g) || [];
+      var hit = names.some(function (n) { return html.indexOf(n.slice(1)) !== -1; });
+      if (!hit) return;
+      (r.style.fontFamily || '').split(',').forEach(function (f) {
+        used[f.trim().replace(/["']/g, '')] = true;
+      });
+    });
+    return rules.filter(function (r) {
+      if (r.type !== 5) return true;
+      var fam = (r.style.getPropertyValue('font-family') || '').trim().replace(/["']/g, '');
+      return used[fam];
+    }).map(function (r) { return r.cssText; }).join('\n');
+  }
+
   window.Mappledown = {
     render: function (text) { return schedule(text); },
     setLook: function (c) { cfg = Object.assign(cfg, c || {}); applyLook(cfg); },
     // Rendered body and MathJax's own CSS, used to build a self-contained HTML export.
     exportParts: function () {
       var el = document.getElementById('content');
-      var mj = document.getElementById('MJX-SVG-styles');
-      return { body: el.innerHTML, mathCSS: mj ? mj.textContent : '' };
+      return { body: el.innerHTML, mathCSS: mathCSS(el) };
     },
     scrollToLine: scrollToLine,
     setPrintMode: function (on, h1Break, toc) {

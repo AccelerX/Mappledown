@@ -45,6 +45,7 @@ struct FolderListView: View {
     @State private var query = ""
     @AppStorage("folderSort") private var sort: FolderSort = .name
     @State private var downloading: Set<URL> = []
+    @State private var pendingDelete: FolderEntry?
 
     private var shown: [FolderEntry] {
         let q = query.trimmingCharacters(in: .whitespaces)
@@ -59,44 +60,38 @@ struct FolderListView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(title).font(.largeTitle.weight(.bold)).lineLimit(1)
-                    Spacer()
-                    Text(shown.count == 1 ? "1 item" : "\(shown.count) items")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                }
-
+        List {
+            Section {
                 if shown.isEmpty {
                     ContentUnavailable(title: "No Markdown files here",
                                        message: "Only .md and .markdown files and folders are shown.",
                                        systemImage: "doc.text")
-                    .frame(minHeight: 300)
+                        .frame(minHeight: 300)
+                        .listRowBackground(Color.clear)
                 } else {
-                    VStack(spacing: 0) {
-                        ForEach(shown) { entry in
-                            row(entry)
-                            if entry.id != shown.last?.id {
-                                Divider().padding(.leading, 64)
-                            }
-                        }
+                    ForEach(shown) { entry in
+                        row(entry)
+                            .listRowInsets(EdgeInsets())
                     }
-                    .background(Color(uiColor: .secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Color(uiColor: .separator), lineWidth: 1))
                 }
-
-                Text(footer)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            } header: {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(title).font(.largeTitle.weight(.bold)).lineLimit(1)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Text(shown.count == 1 ? "1 item" : "\(shown.count) items")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                .textCase(nil)
+                .padding(.bottom, 6)
+            } footer: {
+                Text(footer + "\nSwipe right on a file to pin it, or left to delete it.")
                     .frame(maxWidth: .infinity)
+                    .multilineTextAlignment(.center)
                     .padding(.top, 8)
             }
-            .padding(.horizontal, 32)
-            .padding(.vertical, 18)
         }
+        .listStyle(.insetGrouped)
         .refreshable { reload() }
         .searchable(text: $query, placement: .toolbar, prompt: "Search")
         .toolbar {
@@ -125,6 +120,24 @@ struct FolderListView: View {
         .onChange(of: library.current == nil) { closed in
             if closed { reload() }
         }
+        .onChange(of: library.trash.count) { _ in reload() }
+        .alert("Delete \u{201C}\(pendingDelete?.name ?? "")\u{201D}?", isPresented: deleteBinding) {
+            Button("Delete", role: .destructive) {
+                if let entry = pendingDelete {
+                    withAnimation {
+                        if library.moveToTrash(entry.url) { entries.removeAll { $0.id == entry.id } }
+                    }
+                }
+                pendingDelete = nil
+            }
+            Button("Cancel", role: .cancel) { pendingDelete = nil }
+        } message: {
+            Text("It moves to Recently Deleted in the sidebar. You can restore it there for \(TrashItem.keepDays) days.")
+        }
+    }
+
+    private var deleteBinding: Binding<Bool> {
+        Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } })
     }
 
     private var footer: String {
@@ -140,9 +153,9 @@ struct FolderListView: View {
             NavigationLink(value: entry.url) {
                 rowContent(entry, icon: AnyView(
                     Image(systemName: "folder.fill").font(.system(size: 28)).foregroundStyle(Color(red: 0.35, green: 0.66, blue: 0.9))
-                ), detail: entry.itemCount.map { $0 == 1 ? "1 item" : "\($0) items" } ?? "", chevron: true)
+                ), detail: entry.itemCount.map { $0 == 1 ? "1 item" : "\($0) items" } ?? "", chevron: false)
             }
-            .buttonStyle(.plain)
+            .padding(.trailing, 16)
         case .file:
             Button {
                 library.open(entry.url, defaultMode: settings.defaultMode)
@@ -150,11 +163,34 @@ struct FolderListView: View {
                 rowContent(entry, icon: AnyView(MDIcon(dashed: false)), detail: fileDetail(entry), chevron: false)
             }
             .buttonStyle(.plain)
+            // Like Apple Music: swipe right to pin, swipe left to delete.
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                let pinned = library.isPinned(entry.url)
+                Button {
+                    library.pin(url: entry.url)
+                } label: {
+                    Label(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash.fill" : "pin.fill")
+                }
+                .tint(.orange)
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button {
+                    pendingDelete = entry
+                } label: {
+                    Label("Delete", systemImage: "trash.fill")
+                }
+                .tint(.red)
+            }
             .contextMenu {
                 Button {
                     library.pin(url: entry.url)
                 } label: {
                     Label(library.isPinned(entry.url) ? "Unpin" : "Pin", systemImage: "pin")
+                }
+                Button(role: .destructive) {
+                    pendingDelete = entry
+                } label: {
+                    Label("Delete…", systemImage: "trash")
                 }
             }
         case .cloudOnly:

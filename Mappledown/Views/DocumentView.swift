@@ -192,6 +192,23 @@ struct DocumentView: View {
     private var statusBar: some View {
         HStack(spacing: 20) {
             if mode != .preview {
+                // One tap shows or hides the math keys row (same switch as in Settings › Editor).
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { settings.mathKeys.toggle() }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "function")
+                        Text("Math keys")
+                        Image(systemName: settings.mathKeys ? "chevron.down" : "chevron.up")
+                            .font(.caption2.weight(.bold))
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(height: 26)
+                    .foregroundStyle(settings.mathKeys ? Color.white : Color.accentColor)
+                    .background(Capsule().fill(settings.mathKeys ? Color.accentColor : Color.accentColor.opacity(0.14)))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(settings.mathKeys ? "Hide math keys" : "Show math keys")
                 Text("Ln \(editor.line), Col \(editor.column)")
             }
             Text("Markdown · UTF-8")

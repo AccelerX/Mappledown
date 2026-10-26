@@ -23,7 +23,7 @@ const { chromium } = require('playwright');
     return {
       math: el.querySelectorAll('mjx-container').length,
       display: el.querySelectorAll('mjx-container[display="true"]').length,
-      errors: [...el.querySelectorAll('[data-mml-node="merror"]')].map((e) => e.getAttribute('data-mjx-error') || e.textContent),
+      errors: [...el.querySelectorAll('mjx-merror, [data-mml-node="merror"]')].map((e) => e.getAttribute('data-mjx-error') || e.textContent),
       leftoverDollars: [...el.querySelectorAll('p, li, td')].filter((e) => !e.closest('code') && /\$[^\s$]/.test(e.innerText)).map((e) => e.innerText.slice(0, 80)),
       eqNumbers: [...el.querySelectorAll('mjx-container')].map((c) => c.textContent).length
     };

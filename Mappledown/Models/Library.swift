@@ -20,9 +20,28 @@ struct LinkedFolder: Codable, Identifiable, Equatable, Hashable {
     var isICloud: Bool
 }
 
+/// A file in Recently Deleted, and where to put it back.
+struct TrashItem: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var name: String
+    /// nil means On My iPad; otherwise the linked folder it came from.
+    var folderID: UUID?
+    /// Subfolders between that root and the file, e.g. ["Notes", "Week 1"].
+    var subfolders: [String]
+    var fromLabel: String
+    var deletedAt: Date
+
+    static let keepDays = 30
+    var daysLeft: Int {
+        let gone = deletedAt.addingTimeInterval(Double(TrashItem.keepDays) * 86_400)
+        return max(0, Int(ceil(gone.timeIntervalSinceNow / 86_400)))
+    }
+}
+
 enum SidebarItem: Hashable {
     case recents
     case pinned
+    case trash
     case onMyIPad
     case folder(UUID)
 }
@@ -35,6 +54,7 @@ final class Library: ObservableObject {
     @Published var current: MarkdownDocument?
     @Published var currentMode: ViewMode = .split
     @Published var alert: String?
+    @Published private(set) var trash: [TrashItem] = []
 
     private var folderURLs: [UUID: URL] = [:]
     private let store = UserDefaults.standard
@@ -48,14 +68,22 @@ final class Library: ObservableObject {
         if let data = store.data(forKey: "folders"), let f = try? JSONDecoder().decode([LinkedFolder].self, from: data) {
             folders = f
         }
+        if let data = store.data(forKey: "trash"), let t = try? JSONDecoder().decode([TrashItem].self, from: data) {
+            trash = t
+        }
         for folder in folders { _ = resolveFolder(folder) }
         installSampleIfNeeded()
+        purgeOldTrash()
     }
 
     // MARK: Persistence
 
     private func saveRecents() {
         if let data = try? JSONEncoder().encode(recents) { store.set(data, forKey: "recents") }
+    }
+
+    private func saveTrash() {
+        if let data = try? JSONEncoder().encode(trash) { store.set(data, forKey: "trash") }
     }
 
     private func saveFolders() {
@@ -224,6 +252,123 @@ final class Library: ObservableObject {
             record(doc)
         }
         current = nil
+    }
+
+    // MARK: Recently Deleted
+
+    /// Mappledown's own recycle bin, kept inside the app (not visible in Files).
+    let trashURL: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Recently Deleted", isDirectory: true)
+
+    private func trashFile(for item: TrashItem) -> URL {
+        trashURL.appendingPathComponent(item.id.uuidString, isDirectory: true).appendingPathComponent(item.name)
+    }
+
+    /// The root folder (On My iPad or a linked folder) that contains `url`, if any.
+    private func root(containing url: URL) -> (id: UUID?, url: URL)? {
+        let path = url.standardizedFileURL.path
+        let docs = documentsURL.standardizedFileURL
+        if path.hasPrefix(docs.path + "/") { return (nil, docs) }
+        for folder in folders {
+            guard let root = folderURLs[folder.id]?.standardizedFileURL, path.hasPrefix(root.path + "/") else { continue }
+            return (folder.id, root)
+        }
+        return nil
+    }
+
+    /// Moves a file into Recently Deleted. Returns false and sets `alert` if that fails.
+    @discardableResult
+    func moveToTrash(_ url: URL) -> Bool {
+        let file = url.standardizedFileURL
+        var subfolders: [String] = []
+        var folderID: UUID?
+        if let r = root(containing: file) {
+            folderID = r.id
+            subfolders = Array(file.deletingLastPathComponent().pathComponents.dropFirst(r.url.pathComponents.count))
+        }
+        let item = TrashItem(name: file.lastPathComponent, folderID: folderID, subfolders: subfolders,
+                             fromLabel: locationLabel(for: file), deletedAt: Date())
+        let target = trashFile(for: item)
+        do {
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Library.coordinatedMove(from: file, to: target)
+        } catch {
+            alert = "Couldn't delete \(file.lastPathComponent): \(error.localizedDescription)"
+            return false
+        }
+        trash.insert(item, at: 0)
+        saveTrash()
+        recents.removeAll { $0.path == file.path }
+        saveRecents()
+        return true
+    }
+
+    /// Puts a file back where it was. If a file with that name is there now, adds a number.
+    func restore(_ item: TrashItem) {
+        var base: URL?
+        if let id = item.folderID {
+            if let folder = folders.first(where: { $0.id == id }) { base = resolveFolder(folder) }
+        } else {
+            base = documentsURL
+        }
+        guard var folder = base else {
+            alert = "The folder \(item.name) came from isn't in the sidebar anymore. Add it again with Add Folder…, then restore."
+            return
+        }
+        for part in item.subfolders { folder.appendPathComponent(part, isDirectory: true) }
+        let fm = FileManager.default
+        var dest = folder.appendingPathComponent(item.name)
+        let stem = (item.name as NSString).deletingPathExtension
+        let ext = (item.name as NSString).pathExtension
+        var n = 2
+        while fm.fileExists(atPath: dest.path) {
+            dest = folder.appendingPathComponent(ext.isEmpty ? "\(stem) \(n)" : "\(stem) \(n).\(ext)")
+            n += 1
+        }
+        do {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Library.coordinatedMove(from: trashFile(for: item), to: dest)
+        } catch {
+            alert = "Couldn't restore \(item.name): \(error.localizedDescription)"
+            return
+        }
+        try? fm.removeItem(at: trashFile(for: item).deletingLastPathComponent())
+        trash.removeAll { $0.id == item.id }
+        saveTrash()
+    }
+
+    func deleteForever(_ item: TrashItem) {
+        try? FileManager.default.removeItem(at: trashFile(for: item).deletingLastPathComponent())
+        trash.removeAll { $0.id == item.id }
+        saveTrash()
+    }
+
+    func emptyTrash() {
+        for item in trash { try? FileManager.default.removeItem(at: trashFile(for: item).deletingLastPathComponent()) }
+        trash = []
+        saveTrash()
+    }
+
+    /// Files stay in Recently Deleted for 30 days.
+    private func purgeOldTrash() {
+        for item in trash where item.daysLeft == 0 { deleteForever(item) }
+        // Drop entries whose file is gone.
+        let missing = trash.filter { !FileManager.default.fileExists(atPath: trashFile(for: $0).path) }
+        if !missing.isEmpty {
+            trash.removeAll { item in missing.contains(where: { $0.id == item.id }) }
+            saveTrash()
+        }
+    }
+
+    private static func coordinatedMove(from source: URL, to dest: URL) throws {
+        var coordError: NSError?
+        var moveError: Error?
+        NSFileCoordinator().coordinate(writingItemAt: source, options: .forMoving,
+                                       writingItemAt: dest, options: .forReplacing, error: &coordError) { src, dst in
+            do { try FileManager.default.moveItem(at: src, to: dst) } catch { moveError = error }
+        }
+        if let e = coordError { throw e }
+        if let e = moveError { throw e }
     }
 
     // MARK: New files

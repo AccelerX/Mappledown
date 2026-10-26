@@ -12,6 +12,9 @@ struct SidebarView: View {
             Section("Library") {
                 Label("Recents", systemImage: "clock").tag(SidebarItem.recents)
                 Label("Pinned", systemImage: "pin").tag(SidebarItem.pinned)
+                Label("Recently Deleted", systemImage: "trash")
+                    .badge(library.trash.count)
+                    .tag(SidebarItem.trash)
             }
             Section("Open from") {
                 Label("On My iPad", systemImage: "ipad").tag(SidebarItem.onMyIPad)
